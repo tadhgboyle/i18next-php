@@ -11,308 +11,355 @@
 
 namespace samerton\i18next;
 
-class i18next {
+use Exception;
+
+/**
+ * i18next internationalization library for PHP
+ */
+class i18next
+{
+    private ?string $fallbackLanguage = null;
+    private array $translations = [];
+    private string $language;
+    private ?string $path;
 
     /**
-     * Path for the translation files
-     * @var string Path
-     */
-    private string $_path = '';
-
-    /**
-     * Primary language to use
-     * @var string Code for the current language
-     */
-    private string $_language = '';
-
-    /**
-     * Fallback language for translations not found in current language
-     * @var string Fallback language
-     */
-    private string $_fallbackLanguage = 'dev';
-
-    /**
-     * Array to store the translations
-     * @var array Translations
-     */
-    private array $_translation = [];
-
-    /**
-     * Logs keys for missing translations
-     * @var array Missing keys
-     */
-    private array $_missingTranslation = [];
-
-    /**
-     * Inits i18next class
-     * Path may include __lng___ and __ns__ placeholders so all languages and namespaces are loaded
+     * Initialize i18next class
      *
      * @param string $language Locale language code
-     * @param ?string $path Path to locale json files
-     * @param ?string $fallback Optional fallback language code
-     *
-     * @throws \Exception via loadTranslation
+     * @param string|null $path Path to locale json files
+     * @param string|null $fallbackLanguage Optional fallback language code
+     * @throws Exception If translation files cannot be loaded
      */
-    public function __construct(string $language = 'en', string $path = null, string $fallback = null) {
-        $this->_language = $language;
-        $this->_path = $path;
+    public function __construct(
+        string $language = 'en',
+        ?string $path = null,
+        ?string $fallbackLanguage = null
+    ) {
+        $this->language = $language;
+        $this->path = $path;
 
-        if (!empty($fallback))
-            $this->_fallbackLanguage = $fallback;
+        if ($fallbackLanguage) {
+            $this->fallbackLanguage = $fallbackLanguage;
+        }
 
         $this->loadTranslation();
     }
 
     /**
-     * Change default language and fallback language
-     * If fallback is not set it is left unchanged
-     *
-     * @param string $language New default language
-     * @param ?string $fallback Fallback language
-     */
-    public function setLanguage(string $language, string $fallback = null) {
-
-        $this->_language = $language;
-
-        if (!empty($fallback))
-            $this->_fallbackLanguage = $fallback;
-
-    }
-
-    /**
-     * Get list of missing translations
-     *
-     * @return array Missing translations
-     */
-    public function getMissingTranslations(): array {
-
-        return $this->_missingTranslation;
-
-    }
-
-    /**
-     * Check if translated string is available
-     *
-     * @param string $key Key for translation
-     * @return boolean Stating the result
-     */
-    public function existTranslation(string $key) {
-
-        $return = $this->_getKey($key);
-
-        if ($return)
-            $return = true;
-
-        return $return;
-
-    }
-
-    /**
      * Get translation for given key
      *
-     * @param string $key Key for the translation
-     * @param array $variables Variables
-     * @return mixed Translated string or array
+     * @param string $key Key for the translation (supports dot notation for nested keys)
+     * @param array $variables Variables for interpolation and modifiers (count, lng, defaultValue)
+     * @return string The translated string with variables interpolated
      */
-    public function getTranslation(string $key, array $variables = array()) {
+    public function getTranslation(string $key, array $variables = []): string
+    {
+        $translation = $this->getKey($key, $variables);
 
-        $return = $this->_getKey($key, $variables);
-
-        // Log missing translation
-        if (!$return && array_key_exists('lng', $variables))
-            array_push($this->_missingTranslation, array('language' => $variables['lng'], 'key' => $key));
-
-        else if (!$return)
-            array_push($this->_missingTranslation, array('language' => $this->_language, 'key' => $key));
-
-        // fallback language check
-        if (!$return && !isset($variables['lng']) && !empty($this->_fallbackLanguage))
-            $return = $this->_getKey($key, array_merge($variables, array('lng'=>  $this->_fallbackLanguage)));
-
-        if (!$return && array_key_exists('defaultValue', $variables))
-            $return = $variables['defaultValue'];
-
-        if ($return && isset($variables['postProcess']) && $variables['postProcess'] === 'sprintf' && isset($variables['sprintf'])) {
-
-            if (is_array($variables['sprintf']))
-                $return = vsprintf($return, $variables['sprintf']);
-
-            else
-                $return = sprintf($return, $variables['sprintf']);
-
+        // Try fallback language if no translation found and no explicit language specified
+        if (!$translation && !isset($variables['lng']) && $this->fallbackLanguage) {
+            $fallbackVariables = array_merge($variables, ['lng' => $this->fallbackLanguage]);
+            $translation = $this->getKey($key, $fallbackVariables);
         }
 
-        if (!$return)
-            $return = $key;
+        // Use default value if provided and no translation found
+        if (!$translation && array_key_exists('defaultValue', $variables)) {
+            $translation = $variables['defaultValue'];
+        }
 
+        // Fallback to key if no translation found
+        if (!$translation) {
+            $translation = $key;
+        }
+
+        // Interpolate variables into the translation
+        return $this->interpolateVariables($translation, $variables);
+    }
+
+    /**
+     * Interpolate variables into a translation string
+     *
+     * @param string $translation The translation string with placeholders
+     * @param array $variables Array of variables to interpolate
+     * @return string The translation with variables replaced
+     */
+    private function interpolateVariables(string $translation, array $variables): string
+    {
         foreach ($variables as $variable => $value) {
-
             if (is_string($value) || is_numeric($value)) {
-                $return = preg_replace('/__' . $variable . '__/', $value, $return);
-                $return = preg_replace('/{{' . $variable . '}}/', $value, $return);
+                $translation = preg_replace('/{{' . $variable . '}}/', (string) $value, $translation);
             }
-
         }
 
-        return $return;
-
+        return $translation;
     }
 
     /**
-     * Loads translation(s)
-     * @throws \Exception
+     * Load translation files from the specified path
+     *
+     * @throws Exception If translation files cannot be found or loaded
      */
-    private function loadTranslation() {
+    private function loadTranslation(): void
+    {
+        $resolvedPath = $this->resolvePath();
+        $files = $this->getTranslationFiles($resolvedPath);
 
-        $path = preg_replace('/__(.+?)__/', '*', $this->_path, 2, $hasNs);
-
-        if (!preg_match('/\.json$/', $path)) {
-
-            $path = $path . 'translation.json';
-
-            $this->_path = $this->_path . 'translation.json';
-
+        if (empty($files)) {
+            throw new Exception('Translation file not found');
         }
 
-        $dir = glob($path);
-
-        if (count($dir) === 0)
-            throw new \Exception('Translation file not found');
-
-        foreach ($dir as $file) {
-
-            $translation = file_get_contents($file);
-
-            $translation = json_decode($translation, true);
-
-            if ($translation === null)
-                throw new \Exception('Invalid json ' . $file);
-
-            if ($hasNs) {
-
-                $regexp = preg_replace('/__(.+?)__/', '(?<$1>.+)?', preg_quote($this->_path, '/'));
-
-                preg_match('/^' . $regexp . '$/', $file, $ns);
-
-                if (!array_key_exists('lng', $ns))
-                    $ns['lng'] = $this->_language;
-
-                if (array_key_exists('ns', $ns)) {
-
-                    if (array_key_exists($ns['lng'], $this->_translation) && array_key_exists($ns['ns'], $this->_translation[$ns['lng']]))
-                        $this->_translation[$ns['lng']][$ns['ns']] = array_merge($this->_translation[$ns['lng']][$ns['ns']], array($ns['ns'] => $translation));
-
-                    else if (array_key_exists($ns['lng'], $this->_translation))
-                        $this->_translation[$ns['lng']] = array_merge($this->_translation[$ns['lng']], array($ns['ns'] => $translation));
-
-                    else
-                        $this->_translation[$ns['lng']] = array($ns['ns'] => $translation);
-
-                }
-                else {
-
-                    if (array_key_exists($ns['lng'], $this->_translation))
-                        $this->_translation[$ns['lng']] = array_merge($this->_translation[$ns['lng']], $translation);
-
-                    else
-                        $this->_translation[$ns['lng']] = $translation;
-
-                }
-
-            }
-            else {
-
-                if (array_key_exists($this->_language, $translation))
-                    $this->_translation = $translation;
-
-                else
-                    $this->_translation = array_merge($this->_translation, $translation);
-
-            }
-
+        foreach ($files as $file) {
+            $translationData = $this->loadTranslationFile($file);
+            $this->mergeTranslationData($file, $translationData);
         }
-
     }
 
     /**
-     * Get translation for given key
+     * Resolve the translation file path and determine if namespaces are used
      *
-     * Translation is looked up in language specified in $variables['lng'], current language or Fallback language - in this order.
-     * Fallback language is used only if defined and no explicit language was specified in $variables
-     *
-     * @param string $key Key for translation
-     * @param array $variables Variables
-     * @return mixed Translated string or array if requested. False if translation doesn't exist
+     * @return array Array with 'path' and 'hasNamespaces' keys
      */
-    private function _getKey(string $key, array $variables = array()) {
+    private function resolvePath(): array
+    {
+        $path = preg_replace('/__(.+?)__/', '*', $this->path, 2, $hasNs);
+        $hasNamespaces = $hasNs !== 0;
 
-        $return = false;
+        if (!preg_match('/\.json$/', (string) $path)) {
+            $path .= 'translation.json';
+            $this->path .= 'translation.json';
+        }
 
-        if (array_key_exists('lng', $variables) && array_key_exists($variables['lng'], $this->_translation))
-            $translation = $this->_translation[$variables['lng']];
+        return ['path' => $path, 'hasNamespaces' => $hasNamespaces];
+    }
 
-        else if (array_key_exists($this->_language, $this->_translation))
-            $translation = $this->_translation[$this->_language];
+    /**
+     * Get list of translation files from the resolved path
+     *
+     * @param array $pathInfo Path information with 'path' and 'hasNamespaces' keys
+     * @return array Array of file paths
+     */
+    private function getTranslationFiles(array $pathInfo): array
+    {
+        return glob($pathInfo['path']);
+    }
 
-        else
-            $translation = $this->_translation;
+    /**
+     * Load and parse a translation file
+     *
+     * @param string $filePath Path to the translation file
+     * @return array Parsed translation data
+     * @throws Exception If file cannot be read or contains invalid JSON
+     */
+    private function loadTranslationFile(string $filePath): array
+    {
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            throw new Exception("Could not read translation file: $filePath");
+        }
 
-        // path traversal - last array will be response
-        $paths_arr = explode('.', $key);
+        $translation = json_decode($content, true);
+        if ($translation === null) {
+            throw new Exception("Invalid json $filePath");
+        }
 
-        while ($path = array_shift($paths_arr)) {
+        return $translation;
+    }
 
-            if (array_key_exists($path, $translation) && is_array($translation[$path]) && count($paths_arr) > 0) {
+    /**
+     * Merge translation data into the translations array
+     *
+     * @param string $filePath Path to the translation file
+     * @param array $translationData Parsed translation data
+     */
+    private function mergeTranslationData(string $filePath, array $translationData): void
+    {
+        $pathInfo = $this->resolvePath();
 
-                $translation = $translation[$path];
+        if ($pathInfo['hasNamespaces']) {
+            $this->mergeNamespacedTranslation($filePath, $translationData);
+        } else {
+            $this->mergeSimpleTranslation($translationData);
+        }
+    }
 
-            }
-            else if (array_key_exists($path, $translation)) {
+    /**
+     * Merge translation data for namespaced translations
+     *
+     * @param string $filePath Path to the translation file
+     * @param array $translationData Parsed translation data
+     */
+    private function mergeNamespacedTranslation(string $filePath, array $translationData): void
+    {
+        $regexp = preg_replace('/__(.+?)__/', '(?<$1>.+)?', preg_quote($this->path, '/'));
+        preg_match('/^' . $regexp . '$/', $filePath, $matches);
 
-                // Request has context
-                if (array_key_exists('context', $variables)) {
+        if (!array_key_exists('lng', $matches)) {
+            $matches['lng'] = $this->language;
+        }
 
-                    if (array_key_exists($path . '_' . $variables['context'], $translation))
-                        $path = $path . '_' . $variables['context'];
+        $language = $matches['lng'];
 
-                }
+        if (array_key_exists('ns', $matches)) {
+            $namespace = $matches['ns'];
+            $this->mergeLanguageNamespace($language, $namespace, $translationData);
+        } else {
+            $this->mergeLanguageTranslation($language, $translationData);
+        }
+    }
 
-                // Request is plural form
-                // TODO: implement more complex i18next handling
-                if (array_key_exists('count', $variables)) {
+    /**
+     * Merge translation data for a specific language and namespace
+     *
+     * @param string $language Language code
+     * @param string $namespace Namespace identifier
+     * @param array $translationData Translation data to merge
+     */
+    private function mergeLanguageNamespace(string $language, string $namespace, array $translationData): void
+    {
+        if (isset($this->translations[$language][$namespace])) {
+            $this->translations[$language][$namespace] = array_merge(
+                $this->translations[$language][$namespace],
+                [$namespace => $translationData]
+            );
+        } elseif (isset($this->translations[$language])) {
+            $this->translations[$language] = array_merge(
+                $this->translations[$language],
+                [$namespace => $translationData]
+            );
+        } else {
+            $this->translations[$language] = [$namespace => $translationData];
+        }
+    }
 
-                    if ($variables['count'] != 1 && array_key_exists($path . '_plural_' . $variables['count'], $translation))
-                        $path = $path . '_plural' . $variables['count'];
+    /**
+     * Merge translation data for a specific language
+     *
+     * @param string $language Language code
+     * @param array $translationData Translation data to merge
+     */
+    private function mergeLanguageTranslation(string $language, array $translationData): void
+    {
+        if (isset($this->translations[$language])) {
+            $this->translations[$language] = array_merge($this->translations[$language], $translationData);
+        } else {
+            $this->translations[$language] = $translationData;
+        }
+    }
 
-                    else if ($variables['count'] != 1 && array_key_exists($path . '_plural', $translation))
-                        $path = $path . '_plural';
+    /**
+     * Merge simple translation data (without language nesting)
+     *
+     * @param array $translationData Translation data to merge
+     */
+    private function mergeSimpleTranslation(array $translationData): void
+    {
+        if (array_key_exists($this->language, $translationData)) {
+            $this->translations = $translationData;
+        } else {
+            $this->translations = array_merge($this->translations, $translationData);
+        }
+    }
 
-                }
+    /**
+     * Get translation value for a specific key
+     *
+     * @param string $key Translation key
+     * @param array $variables Variables for modifiers and language selection
+     * @return string|false The translation value or false if not found
+     */
+    private function getKey(string $key, array $variables = [])
+    {
+        $translation = $this->selectTranslationLanguage($variables);
+        $result = $this->traverseTranslationPath($key, $translation, $variables);
 
-                $return = $translation[$path];
+        return $result;
+    }
 
-                break;
+    /**
+     * Select the appropriate translation language based on variables
+     *
+     * @param array $variables Variables that may contain language override
+     * @return array Translation data for the selected language
+     */
+    private function selectTranslationLanguage(array $variables): array
+    {
+        if (array_key_exists('lng', $variables) && array_key_exists($variables['lng'], $this->translations)) {
+            return $this->translations[$variables['lng']];
+        }
 
-            }
-            else {
+        if (array_key_exists($this->language, $this->translations)) {
+            return $this->translations[$this->language];
+        }
 
+        return $this->translations;
+    }
+
+    /**
+     * Traverse the translation path using dot notation
+     *
+     * @param string $key Translation key with dot notation
+     * @param array $translation Translation data to traverse
+     * @param array $variables Variables for modifiers
+     * @return string|false The translation value or false if not found
+     */
+    private function traverseTranslationPath(string $key, array $translation, array $variables)
+    {
+        $pathSegments = explode('.', $key);
+
+        while ($segment = array_shift($pathSegments)) {
+            if ($this->shouldContinueTraversal($segment, $translation, $pathSegments)) {
+                $translation = $translation[$segment];
+            } elseif (array_key_exists($segment, $translation)) {
+                $resolvedKey = $this->applyPluralizationModifier($segment, $translation, $variables);
+                return $translation[$resolvedKey];
+            } else {
                 return false;
-
             }
-
         }
 
-        if (is_array($return) && isset($variables['returnObjectTrees']) && $variables['returnObjectTrees'] === true)
-            $return = $return;
-
-        else if (is_array($return) && array_keys($return) === range(0, count($return) - 1))
-            $return = implode("\n", $return);
-
-        else if (is_array($return))
-            return false;
-
-        return $return;
-
+        return false;
     }
 
+    /**
+     * Determine if traversal should continue to the next path segment
+     *
+     * @param string $segment Current path segment
+     * @param array $translation Current translation data
+     * @param array $remainingSegments Remaining path segments
+     * @return bool True if traversal should continue
+     */
+    private function shouldContinueTraversal(string $segment, array $translation, array $remainingSegments): bool
+    {
+        return array_key_exists($segment, $translation)
+            && is_array($translation[$segment])
+            && count($remainingSegments) > 0;
+    }
+
+    /**
+     * Apply pluralization modifier to a translation key
+     *
+     * @param string $key Base translation key
+     * @param array $translation Translation data
+     * @param array $variables Variables that may contain count
+     * @return string Modified key with pluralization applied
+     */
+    private function applyPluralizationModifier(string $key, array $translation, array $variables): string
+    {
+        if (!array_key_exists('count', $variables) || $variables['count'] == 1) {
+            return $key;
+        }
+
+        $specificPluralKey = $key . '_plural_' . $variables['count'];
+        if (array_key_exists($specificPluralKey, $translation)) {
+            return $specificPluralKey;
+        }
+
+        $generalPluralKey = $key . '_plural';
+        if (array_key_exists($generalPluralKey, $translation)) {
+            return $generalPluralKey;
+        }
+
+        return $key;
+    }
 }
