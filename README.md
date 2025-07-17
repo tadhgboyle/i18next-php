@@ -47,7 +47,6 @@ $i18n->getTranslation('welcome', ['name' => 'John']);
 
 Variables array supports:
 - `count`: For plural forms
-- `defaultValue`: Default value if translation not found
 - Any custom variables for interpolation
 
 ## Language Files

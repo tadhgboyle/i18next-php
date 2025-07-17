@@ -13,16 +13,6 @@ namespace samerton\i18next;
 
 use Exception;
 
-/**
- * i18next internationalization library for PHP
- *
- * Loads language-specific JSON files from a directory structure like:
- * translations/
- * ├── en.json
- * ├── fi.json
- * ├── de.json
- * └── fr.json
- */
 class i18next
 {
     private array $translations = [];
@@ -47,7 +37,7 @@ class i18next
      * Get translation for given key
      *
      * @param string $key Key for the translation (supports dot notation for nested keys)
-     * @param array $variables Variables for interpolation and modifiers (count, defaultValue)
+     * @param array $variables Variables for interpolation and modifiers (count)
      * @return string The translated string with variables interpolated
      */
     public function getTranslation(string $key, array $variables = []): string
@@ -58,11 +48,6 @@ class i18next
         if (!$translation && $this->fallbackLanguage) {
             $fallbackVariables = array_merge($variables, ['_useFallback' => true]);
             $translation = $this->getKey($key, $fallbackVariables);
-        }
-
-        // Use default value if provided and no translation found
-        if (!$translation && array_key_exists('defaultValue', $variables)) {
-            $translation = $variables['defaultValue'];
         }
 
         // Fallback to key if no translation found
@@ -106,18 +91,27 @@ class i18next
             $this->mergeLanguageTranslation($this->language, $translationData);
         }
 
-        // Load fallback language file if different from primary
-        if ($this->fallbackLanguage && $this->fallbackLanguage !== $this->language) {
+        // Check if we have any translations loaded
+        if (empty($this->translations)) {
+            throw new Exception('Translation file not found');
+        }
+    }
+
+    /**
+     * Load fallback language on demand if not already loaded
+     */
+    private function ensureFallbackLanguageLoaded(): void
+    {
+        if (
+            $this->fallbackLanguage &&
+            $this->fallbackLanguage !== $this->language &&
+            !array_key_exists($this->fallbackLanguage, $this->translations)
+        ) {
             $fallbackFile = $this->getLanguageFilePath($this->fallbackLanguage);
             if ($fallbackFile) {
                 $translationData = $this->loadTranslationFile($fallbackFile);
                 $this->mergeLanguageTranslation($this->fallbackLanguage, $translationData);
             }
-        }
-
-        // Check if we have any translations loaded
-        if (empty($this->translations)) {
-            throw new Exception('Translation file not found');
         }
     }
 
@@ -195,12 +189,11 @@ class i18next
     private function selectTranslationLanguage(array $variables): array
     {
         // Use fallback language if explicitly requested
-        if (
-            array_key_exists('_useFallback', $variables) &&
-            $this->fallbackLanguage &&
-            array_key_exists($this->fallbackLanguage, $this->translations)
-        ) {
-            return $this->translations[$this->fallbackLanguage];
+        if (array_key_exists('_useFallback', $variables) && $this->fallbackLanguage) {
+            $this->ensureFallbackLanguageLoaded();
+            if (array_key_exists($this->fallbackLanguage, $this->translations)) {
+                return $this->translations[$this->fallbackLanguage];
+            }
         }
 
         // Use primary language
