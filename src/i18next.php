@@ -15,34 +15,31 @@ use Exception;
 
 /**
  * i18next internationalization library for PHP
+ *
+ * Loads language-specific JSON files from a directory structure like:
+ * translations/
+ * ├── en.json
+ * ├── fi.json
+ * ├── de.json
+ * └── fr.json
  */
 class i18next
 {
-    private ?string $fallbackLanguage = null;
     private array $translations = [];
-    private string $language;
-    private ?string $path;
 
     /**
      * Initialize i18next class
      *
      * @param string $language Locale language code
-     * @param string|null $path Path to locale json files
+     * @param string $path Path to directory containing language json files (e.g., 'translations/')
      * @param string|null $fallbackLanguage Optional fallback language code
      * @throws Exception If translation files cannot be loaded
      */
     public function __construct(
-        string $language = 'en',
-        ?string $path = null,
-        ?string $fallbackLanguage = null
+        private string $language,
+        private string $path,
+        private ?string $fallbackLanguage = null,
     ) {
-        $this->language = $language;
-        $this->path = $path;
-
-        if ($fallbackLanguage) {
-            $this->fallbackLanguage = $fallbackLanguage;
-        }
-
         $this->loadTranslation();
     }
 
@@ -50,16 +47,16 @@ class i18next
      * Get translation for given key
      *
      * @param string $key Key for the translation (supports dot notation for nested keys)
-     * @param array $variables Variables for interpolation and modifiers (count, lng, defaultValue)
+     * @param array $variables Variables for interpolation and modifiers (count, defaultValue)
      * @return string The translated string with variables interpolated
      */
     public function getTranslation(string $key, array $variables = []): string
     {
         $translation = $this->getKey($key, $variables);
 
-        // Try fallback language if no translation found and no explicit language specified
-        if (!$translation && !isset($variables['lng']) && $this->fallbackLanguage) {
-            $fallbackVariables = array_merge($variables, ['lng' => $this->fallbackLanguage]);
+        // Try fallback language if no translation found and fallback is configured
+        if (!$translation && $this->fallbackLanguage) {
+            $fallbackVariables = array_merge($variables, ['_useFallback' => true]);
             $translation = $this->getKey($key, $fallbackVariables);
         }
 
@@ -88,7 +85,7 @@ class i18next
     {
         foreach ($variables as $variable => $value) {
             if (is_string($value) || is_numeric($value)) {
-                $translation = preg_replace('/{{' . $variable . '}}/', (string) $value, $translation);
+                $translation = preg_replace('/{{' . $variable . '}}/', (string)$value, $translation);
             }
         }
 
@@ -102,46 +99,39 @@ class i18next
      */
     private function loadTranslation(): void
     {
-        $resolvedPath = $this->resolvePath();
-        $files = $this->getTranslationFiles($resolvedPath);
+        // Load primary language file
+        $primaryFile = $this->getLanguageFilePath($this->language);
+        if ($primaryFile) {
+            $translationData = $this->loadTranslationFile($primaryFile);
+            $this->mergeLanguageTranslation($this->language, $translationData);
+        }
 
-        if (empty($files)) {
+        // Load fallback language file if different from primary
+        if ($this->fallbackLanguage && $this->fallbackLanguage !== $this->language) {
+            $fallbackFile = $this->getLanguageFilePath($this->fallbackLanguage);
+            if ($fallbackFile) {
+                $translationData = $this->loadTranslationFile($fallbackFile);
+                $this->mergeLanguageTranslation($this->fallbackLanguage, $translationData);
+            }
+        }
+
+        // Check if we have any translations loaded
+        if (empty($this->translations)) {
             throw new Exception('Translation file not found');
         }
-
-        foreach ($files as $file) {
-            $translationData = $this->loadTranslationFile($file);
-            $this->mergeTranslationData($file, $translationData);
-        }
     }
 
     /**
-     * Resolve the translation file path and determine if namespaces are used
+     * Get the file path for a specific language
      *
-     * @return array Array with 'path' and 'hasNamespaces' keys
+     * @param string $language Language code
+     * @return string|null The file path or null if not found
      */
-    private function resolvePath(): array
+    private function getLanguageFilePath(string $language): ?string
     {
-        $path = preg_replace('/__(.+?)__/', '*', $this->path, 2, $hasNs);
-        $hasNamespaces = $hasNs !== 0;
-
-        if (!preg_match('/\.json$/', (string) $path)) {
-            $path .= 'translation.json';
-            $this->path .= 'translation.json';
-        }
-
-        return ['path' => $path, 'hasNamespaces' => $hasNamespaces];
-    }
-
-    /**
-     * Get list of translation files from the resolved path
-     *
-     * @param array $pathInfo Path information with 'path' and 'hasNamespaces' keys
-     * @return array Array of file paths
-     */
-    private function getTranslationFiles(array $pathInfo): array
-    {
-        return glob($pathInfo['path']);
+        // Handle directory with language-specific files like en.json, fi.json
+        $filePath = rtrim($this->path, '/') . '/' . $language . '.json';
+        return file_exists($filePath) ? $filePath : null;
     }
 
     /**
@@ -167,72 +157,6 @@ class i18next
     }
 
     /**
-     * Merge translation data into the translations array
-     *
-     * @param string $filePath Path to the translation file
-     * @param array $translationData Parsed translation data
-     */
-    private function mergeTranslationData(string $filePath, array $translationData): void
-    {
-        $pathInfo = $this->resolvePath();
-
-        if ($pathInfo['hasNamespaces']) {
-            $this->mergeNamespacedTranslation($filePath, $translationData);
-        } else {
-            $this->mergeSimpleTranslation($translationData);
-        }
-    }
-
-    /**
-     * Merge translation data for namespaced translations
-     *
-     * @param string $filePath Path to the translation file
-     * @param array $translationData Parsed translation data
-     */
-    private function mergeNamespacedTranslation(string $filePath, array $translationData): void
-    {
-        $regexp = preg_replace('/__(.+?)__/', '(?<$1>.+)?', preg_quote($this->path, '/'));
-        preg_match('/^' . $regexp . '$/', $filePath, $matches);
-
-        if (!array_key_exists('lng', $matches)) {
-            $matches['lng'] = $this->language;
-        }
-
-        $language = $matches['lng'];
-
-        if (array_key_exists('ns', $matches)) {
-            $namespace = $matches['ns'];
-            $this->mergeLanguageNamespace($language, $namespace, $translationData);
-        } else {
-            $this->mergeLanguageTranslation($language, $translationData);
-        }
-    }
-
-    /**
-     * Merge translation data for a specific language and namespace
-     *
-     * @param string $language Language code
-     * @param string $namespace Namespace identifier
-     * @param array $translationData Translation data to merge
-     */
-    private function mergeLanguageNamespace(string $language, string $namespace, array $translationData): void
-    {
-        if (isset($this->translations[$language][$namespace])) {
-            $this->translations[$language][$namespace] = array_merge(
-                $this->translations[$language][$namespace],
-                [$namespace => $translationData]
-            );
-        } elseif (isset($this->translations[$language])) {
-            $this->translations[$language] = array_merge(
-                $this->translations[$language],
-                [$namespace => $translationData]
-            );
-        } else {
-            $this->translations[$language] = [$namespace => $translationData];
-        }
-    }
-
-    /**
      * Merge translation data for a specific language
      *
      * @param string $language Language code
@@ -248,24 +172,10 @@ class i18next
     }
 
     /**
-     * Merge simple translation data (without language nesting)
-     *
-     * @param array $translationData Translation data to merge
-     */
-    private function mergeSimpleTranslation(array $translationData): void
-    {
-        if (array_key_exists($this->language, $translationData)) {
-            $this->translations = $translationData;
-        } else {
-            $this->translations = array_merge($this->translations, $translationData);
-        }
-    }
-
-    /**
      * Get translation value for a specific key
      *
      * @param string $key Translation key
-     * @param array $variables Variables for modifiers and language selection
+     * @param array $variables Variables for modifiers and internal flags
      * @return string|false The translation value or false if not found
      */
     private function getKey(string $key, array $variables = [])
@@ -277,17 +187,23 @@ class i18next
     }
 
     /**
-     * Select the appropriate translation language based on variables
+     * Select the appropriate translation language based on internal flags
      *
-     * @param array $variables Variables that may contain language override
+     * @param array $variables Variables that may contain internal flags
      * @return array Translation data for the selected language
      */
     private function selectTranslationLanguage(array $variables): array
     {
-        if (array_key_exists('lng', $variables) && array_key_exists($variables['lng'], $this->translations)) {
-            return $this->translations[$variables['lng']];
+        // Use fallback language if explicitly requested
+        if (
+            array_key_exists('_useFallback', $variables) &&
+            $this->fallbackLanguage &&
+            array_key_exists($this->fallbackLanguage, $this->translations)
+        ) {
+            return $this->translations[$this->fallbackLanguage];
         }
 
+        // Use primary language
         if (array_key_exists($this->language, $this->translations)) {
             return $this->translations[$this->language];
         }

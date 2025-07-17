@@ -1,0 +1,11 @@
+{
+    "welcome": "Tervetuloa {{name}}!",
+    "item": "kohde",
+    "item_plural": "kohdetta",
+    "animal": {
+        "dog": "koira",
+        "dog_plural": "koiraa",
+        "catWithCount": "{{count}} kissa",
+        "catWithCount_plural": "{{count}} kissaa"
+    }
+}

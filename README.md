@@ -5,73 +5,73 @@ PHP class for basic [i18next](https://github.com/jamuhl/i18next) functionality.
 ## Features
 
 - Support for [variables](http://i18next.com/pages/doc_features.html#interpolation)
-- Support for [context](http://i18next.com/pages/doc_features.html#context)
-- Support for [basic sprintf](http://i18next.com/pages/doc_features.html#sprintf)
 - Support for [basic plural forms](http://i18next.com/pages/doc_features.html#plurals)
-- Support for [multiline in JSON](http://i18next.com/pages/doc_features.html)
+- Support for fallback languages
+- Simple directory-based language file structure
 
 ## Usage
 
 ```php
-// init i18next instance
-i18next::init('en');
+// Create i18next instance with primary language and translation directory
+$i18n = new i18next('en', 'translations/');
 
-// get translation by key
-echo i18next::getTranslation('animal.dog');
+// Get translation by key
+echo $i18n->getTranslation('animal.dog');
+
+// With fallback language
+$i18n = new i18next('de', 'translations/', 'en');
 ```
 
 ## Methods
 
-### i18next::init( string $languageKey [, string $path ] );
-Loads translation files from given path. Looks for `translation.json` by default.
+### __construct( string $language, string $path [, string $fallbackLanguage ] )
+Creates a new i18next instance and loads translation files from the given directory.
 ```php
-i18next::init('en', 'my/path/');
-// loads my/path/translation.json
-```
-You can also use variables and split namespaces and languages to different files.
-```php
-i18next::init('en', 'languages/__lng__/__ns__.json');
-// loads languages/en/animal.json, languages/fi/animal.json, etc...
+$i18n = new i18next('en', 'translations/');
+// loads translations/en.json
+
+$i18n = new i18next('de', 'translations/', 'en');
+// loads translations/de.json with fallback to translations/en.json
 ```
 
-Method throws an exception if no files are found or the json can not be parsed.
+The translation directory should contain JSON files named after language codes (e.g., `en.json`, `de.json`, `fi.json`).
 
-### mixed i18next::getTranslation( string $key [, array $variables ] );
+Method throws an exception if the directory is not found or the JSON files cannot be parsed.
+
+### string getTranslation( string $key [, array $variables ] )
 Returns translated string by key.
 ```php
-i18next::getTranslation('animal.catWithCount', array('count' => 2, 'lng' => 'fi'));
+$i18n->getTranslation('animal.catWithCount', ['count' => 2]);
+$i18n->getTranslation('welcome', ['name' => 'John']);
 ```
 
-### boolean i18next::existTranslation( string $key );
-Checks if translated string exists.
+Variables array supports:
+- `count`: For plural forms
+- `defaultValue`: Default value if translation not found
+- Any custom variables for interpolation
 
-### void i18next::setLanguage( string $language [, string $fallback ] );
-Changes language.
+## Language Files
 
-### array i18next::getMissingTranslations();
-Gets an array of missing translations.
+Translation files should be JSON files in the translations directory:
+
 ```
-array(1) {
-    [0]=> array(2) {
-        ["language"]=> string(2) "en"
-        ["key"]=> string(14) "animal.unknown"
-    }
-}
+translations/
+  en.json
+  de.json
+  fi.json
 ```
 
-## Multilines in JSON-arrays
-You can have html content written with multilines in JSON File
-```
+Example `en.json`:
+```json
 {
-	"en": {
-		"common": {
-			"thedoglovers": [
-                "The Dog Lovers by Spike Milligan",
-                "So they bought you",
-                "And kept you in a",
-                "Very good home"
-            ]
-        }
-	}
+  "animal": {
+    "dog": "dog",
+    "dog_2": "dogs",
+    "cat": "cat"
+  },
+  "welcome": "Welcome {{name}}!",
+  "item": "item",
+  "item_2": "items"
 }
 ```
+

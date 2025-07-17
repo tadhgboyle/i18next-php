@@ -1,0 +1,21 @@
+{
+    "friend": "A friend",
+    "welcome": "Welcome {{name}}!",
+    "score": "Your score is {{score}}",
+    "empty": "",
+    "item": "item",
+    "item_plural": "items",
+    "item_plural_5": "exactly 5 items",
+    "item_plural_10": "exactly 10 items",
+    "nested": {
+        "deep": {
+            "value": "Deep nested value"
+        }
+    },
+    "animal": {
+        "dog": "dog",
+        "dog_plural": "dogs",
+        "catWithCount": "{{count}} cat",
+        "catWithCount_plural": "{{count}} cats"
+    }
+}
